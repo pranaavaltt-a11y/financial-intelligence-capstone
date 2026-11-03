@@ -45,3 +45,18 @@ def test_metadata_filters(filing_html):
     assert r.search("revenue", tickers={"OTHER"}) == []
     assert r.search("revenue", years={2019}) == []
     assert r.search("revenue", tickers={"EXMP"}, years={2023})
+
+
+def test_long_item_heading_is_detected():
+    # Regression: Apple's Item 7 heading is longer than 80 characters and was missed.
+    html = ("<html><body><p>Item 6. [Reserved]</p><p>Item 7. Management’s Discussion and Analysis of "
+            "Financial Condition and Results of Operations</p><p>Net sales increased due to higher iPhone and "
+            "Services sales across all regions this year.</p></body></html>")
+    chunks = parse_filing(html, "AAPL", 2024)
+    assert chunks[-1].section == "Item 7 MD&A"
+
+
+def test_sentence_starting_with_item_is_not_a_heading():
+    html = ("<html><body><p>Item 7. Management's Discussion and Analysis</p><p>Item 1A of this report describes "
+            "risks. Investors should read it carefully before investing.</p></body></html>")
+    assert parse_filing(html, "X", 2024)[-1].section == "Item 7 MD&A"

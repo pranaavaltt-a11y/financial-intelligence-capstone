@@ -46,7 +46,7 @@ def extract_facts(companyfacts: dict, ticker: str, years: set[int] | None = None
         chosen: dict[int, Fact] = {}
         for priority, tag in enumerate(tags):
             entries = gaap.get(tag, {}).get("units", {}).get(unit, [])
-            best: dict[int, dict] = {}
+            best: dict[int, list[dict]] = {}
             for e in entries:
                 if e.get("form") != "10-K" or e.get("fp") != "FY" or "end" not in e:
                     continue
@@ -58,10 +58,15 @@ def extract_facts(companyfacts: dict, ticker: str, years: set[int] | None = None
                 fy = date.fromisoformat(e["end"]).year
                 if years and fy not in years:
                     continue
-                prev = best.get(fy)
-                if prev is None or e.get("filed", "") > prev.get("filed", ""):
-                    best[fy] = e
-            for fy, e in best.items():
+                best.setdefault(fy, []).append(e)
+            for fy, cands in best.items():
+                # Later 10-Ks repeat prior years. Keep the original filing for the citation, and switch to a
+                # later one only when it reports a different value (a restatement).
+                cands.sort(key=lambda x: x.get("filed", ""))
+                e = cands[0]
+                for later in cands[1:]:
+                    if later["val"] != e["val"]:
+                        e = later
                 if fy in chosen:          # a higher-priority tag already supplied this year
                     continue
                 chosen[fy] = Fact(ticker=ticker.upper(), fiscal_year=fy, metric=metric, value=float(e["val"]),

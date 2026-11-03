@@ -23,7 +23,8 @@ SECTION_NAMES = {
     "7": "Item 7 MD&A", "7a": "Item 7A Market Risk", "8": "Item 8 Financial Statements",
     "9": "Item 9 Accountant Changes", "9a": "Item 9A Controls and Procedures",
 }
-ITEM_RE = re.compile(r"^\s*item\s+(\d{1,2}[a-c]?)\s*[.:\-–—]?\s*(.{0,80})$", re.IGNORECASE)
+# Headings can be long: "Item 7. Management's Discussion and Analysis of Financial Condition and Results of Operations"
+ITEM_RE = re.compile(r"^\s*item\s+(\d{1,2}[a-c]?)\s*[.:\-–—]?\s*([^.]{0,160})\.?$", re.IGNORECASE)
 BLOCK_TAGS = ["p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6"]
 
 
@@ -43,7 +44,7 @@ def _table_text(table: Tag) -> str:
 
 def _section_for(line: str, current: str) -> str:
     m = ITEM_RE.match(line)
-    if not m or len(line) > 120:
+    if not m or len(line) > 200:
         return current
     key = m.group(1).lower()
     return SECTION_NAMES.get(key, f"Item {key.upper()}")

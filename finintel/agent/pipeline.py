@@ -115,6 +115,8 @@ class FinancialQA:
         if self.retriever and (plan.needs_explanation or not facts):
             hits = self.retriever.search(question, k=self.top_k, tickers=set(plan.companies) or None,
                                          years=None if widen else (set(plan.years) or None))
+            if plan.needs_explanation:   # narrative explains "why"; tables only if nothing else was found
+                hits = [h for h in hits if h.chunk.kind == "text"] + [h for h in hits if h.chunk.kind != "text"]
             for i, h in enumerate(hits[: self.passages_in_answer + (2 if widen else 0)]):
                 passages[f"S{i + 1}"] = h.chunk
         return Evidence(facts, calcs, passages, requested, found, missing)

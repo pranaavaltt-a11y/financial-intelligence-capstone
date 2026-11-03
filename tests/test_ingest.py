@@ -49,3 +49,9 @@ def test_edgar_requires_contact_user_agent(tmp_path):
 def test_archive_url():
     ref = FilingRef("AAPL", 320193, 2023, "0000320193-23-000106", "aapl-20230930.htm", "2023-09-30", "2023-11-03")
     assert ref.url == "https://www.sec.gov/Archives/edgar/data/320193/000032019323000106/aapl-20230930.htm"
+
+
+def test_original_filing_kept_when_later_filings_repeat_the_same_value(exmp_facts_json):
+    # FY2022 revenue appears in the FY2022 and FY2023 10-Ks with the same value: cite the FY2022 filing.
+    f = by(extract_facts(exmp_facts_json, "EXMP"), "revenue", 2022)
+    assert f.accession == "0000000000-22-000001"
