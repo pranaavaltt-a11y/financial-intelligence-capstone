@@ -42,3 +42,47 @@ def test_switches_to_the_model_google_recommends():
 def test_gives_up_cleanly_when_no_model_works():
     llm = GeminiLLM("k", model="gemini-2.5-flash", client=SimpleNamespace(models=FakeModels(set())))
     assert llm.generate("q") is None
+
+
+def overloaded():
+    return errors.ServerError(503, {"error": {"code": 503, "status": "UNAVAILABLE",
+                                              "message": "This model is currently experiencing high demand."}})
+
+
+class FlakyModels:
+    """Fails with 503 for the first `fails` calls to `bad` model; other models always work."""
+
+    def __init__(self, fails, bad="gemini-3.8-flash"):
+        self.fails, self.bad, self.seen = fails, bad, []
+
+    def generate_content(self, model, contents, config):
+        self.seen.append(model)
+        if model == self.bad and self.fails > 0:
+            self.fails -= 1
+            raise overloaded()
+        return SimpleNamespace(text=f"answer from {model}")
+
+
+def test_retries_when_google_is_overloaded():
+    slept = []
+    llm = GeminiLLM("k", client=SimpleNamespace(models=FlakyModels(fails=2)), sleep=slept.append)
+    assert llm.generate("q") == "answer from gemini-3.8-flash"
+    assert slept == [2.0, 4.0]
+
+
+def test_switches_model_when_one_stays_overloaded():
+    slept = []
+    models = FlakyModels(fails=99)
+    llm = GeminiLLM("k", client=SimpleNamespace(models=models), sleep=slept.append)
+    assert llm.generate("q") == "answer from gemini-flash-latest"
+    assert len(slept) == 3 and llm.model == "gemini-flash-latest"
+
+
+def test_daily_quota_is_not_retried():
+    class Daily:
+        def generate_content(self, model, contents, config):
+            raise errors.ClientError(429, {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED",
+                                                     "message": "Quota exceeded: GenerateRequestsPerDayPerProject"}})
+    slept = []
+    llm = GeminiLLM("k", client=SimpleNamespace(models=Daily()), sleep=slept.append)
+    assert llm.generate("q") is None and slept == [] and "429" in llm.last_error

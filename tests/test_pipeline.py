@@ -96,3 +96,19 @@ def test_notes_explain_why_template_was_used(settings):
     ans = FinancialQA(base.wh, base.retriever, BrokenLLM()).ask("What was Example Corp's revenue in FY2023?")
     assert any("failed verification" in n for n in ans.notes)
     assert any("template answer is shown" in n for n in ans.notes)
+
+
+class SilentLLM:
+    name = "silent"
+    last_error = "503 UNAVAILABLE. This model is currently experiencing high demand."
+
+    def generate(self, prompt, as_json=False):
+        return None
+
+
+def test_note_explains_overload_without_claiming_a_draft_failed(settings):
+    build(settings, use_gemini=False)
+    base = load(settings, use_llm=False)
+    ans = FinancialQA(base.wh, base.retriever, SilentLLM()).ask("What was Example Corp's revenue in FY2023?")
+    assert ans.notes == ["Gemini did not return an answer (Google's servers were overloaded) - "
+                         "showing the verified template answer."]

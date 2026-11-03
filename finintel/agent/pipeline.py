@@ -204,6 +204,7 @@ class FinancialQA:
         plan = self.plan(question)
         attempts = 0
         notes: list[str] = []
+        got_draft = False
         best: tuple[str, Evidence, object, bool] | None = None
         for widen in [False] + [True] * self.max_retries:
             attempts += 1
@@ -211,7 +212,12 @@ class FinancialQA:
             candidates: list[tuple[str, bool]] = []
             draft = self._llm_answer(question, ev)
             if self.llm and not draft:
-                notes.append("Gemini did not return an answer (rate limit or error) - template answer used.")
+                err = getattr(self.llm, "last_error", None) or "no response"
+                reason = ("Google's servers were overloaded" if "503" in err or "UNAVAILABLE" in err else
+                          "the free-tier rate limit was reached" if "429" in err else err[:120])
+                notes.append(f"Gemini did not return an answer ({reason}) - showing the verified template answer.")
+            elif self.llm:
+                got_draft = True
             if draft:
                 rep = verify(draft, ev.facts, ev.calcs, ev.passages, ev.requested, ev.found)
                 if not rep.passed and (rep.unsupported_numbers or rep.unsupported_claims):
@@ -236,11 +242,11 @@ class FinancialQA:
             if best and best[2].passed and (not plan.needs_explanation or best[1].passages):
                 break      # verified, and has an explanation if one was asked for
         text, ev, rep, used_llm = best  # type: ignore[misc]
-        if self.llm and not used_llm:
+        if self.llm and not used_llm and got_draft:
             log.warning("Showing the template answer: no Gemini draft passed verification")
             notes.append("No Gemini draft passed verification - the verified template answer is shown.")
         return Answer(question, text, list(ev.calcs.values()), self._citations(ev, text), rep, used_llm, attempts,
-                      notes)
+                      list(dict.fromkeys(notes)))
 
     @staticmethod
     def _rank(rep, ev: Evidence, plan: Plan) -> tuple:

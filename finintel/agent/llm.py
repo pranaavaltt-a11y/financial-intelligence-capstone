@@ -32,40 +32,76 @@ def suggested_model(message: str) -> str | None:
 
 
 class GeminiLLM:
-    def __init__(self, api_key: str, model: str = FALLBACK_MODELS[0], client=None):
+    """Gemini text generation that survives the free tier's rough edges.
+
+    * 404 (model retired)        -> switch to the model Google recommends, then the fallback list
+    * 503 / 500 (overloaded)     -> wait 2s, 4s, 8s and retry; if still failing, try the next model
+    * 429 per-minute rate limit  -> wait the delay Google asks for and retry
+    * 429 daily quota, bad key   -> give up (caller falls back to the verified template answer)
+    """
+
+    def __init__(self, api_key: str, model: str = FALLBACK_MODELS[0], client=None, sleep=None,
+                 retries: int = 3, max_wait: float = 20.0):
         if client is None:
             from google import genai
 
             client = genai.Client(api_key=api_key)
+        import time
+
         self.client = client
         self.model = model
         self.name = model
+        self.sleep = sleep or time.sleep
+        self.retries = retries
+        self.max_wait = max_wait
         self._tried: set[str] = set()
+        self.last_error: str | None = None
 
-    def _candidates(self, failed: str, message: str) -> list[str]:
-        out = [suggested_model(message)] + FALLBACK_MODELS
-        return [m for m in out if m and m != failed and m not in self._tried]
+    def _next_model(self, message: str) -> bool:
+        self._tried.add(self.model)
+        for m in [suggested_model(message)] + FALLBACK_MODELS:
+            if m and m not in self._tried:
+                log.warning("Model %s unavailable; switching to %s", self.model, m)
+                self.model = self.name = m
+                return True
+        return False
 
     def generate(self, prompt: str, as_json: bool = False) -> str | None:
         from google.genai import types
 
         cfg = types.GenerateContentConfig(temperature=0.0,
                                           response_mime_type="application/json" if as_json else "text/plain")
+        attempt = 0
         while True:
             try:
                 res = self.client.models.generate_content(model=self.model, contents=prompt, config=cfg)
+                self.last_error = None
                 return res.text
-            except Exception as exc:  # quota, network, safety block, retired model
+            except Exception as exc:
                 msg = str(exc)
+                self.last_error = msg[:300]
                 if "404" in msg or "NOT_FOUND" in msg:
-                    self._tried.add(self.model)
-                    nxt = self._candidates(self.model, msg)
-                    if nxt:
-                        log.warning("Model %s unavailable; switching to %s", self.model, nxt[0])
-                        self.model = self.name = nxt[0]
+                    if self._next_model(msg):
+                        attempt = 0
                         continue
-                log.warning("LLM call failed: %s", exc)
-                return None
+                    break
+                transient = any(k in msg for k in ("503", "UNAVAILABLE", "500", "INTERNAL", "overloaded"))
+                per_minute = ("429" in msg or "RESOURCE_EXHAUSTED" in msg) and not re.search(r"PerDay|per day", msg)
+                if transient or per_minute:
+                    if attempt < self.retries:
+                        m = re.search(r"retry in ([\d.]+)s", msg)
+                        wait = min(float(m.group(1)) + 1 if m else 2.0 * 2 ** attempt, self.max_wait)
+                        attempt += 1
+                        log.info("Gemini busy (%s) - retrying in %.0fs (%d/%d)",
+                                 "overloaded" if transient else "rate limit", wait, attempt, self.retries)
+                        self.sleep(wait)
+                        continue
+                    if transient and self._next_model(msg):     # this model stays overloaded: try another
+                        attempt = 0
+                        continue
+                break
+        log.warning("LLM call failed: %s", self.last_error)
+        return None
 
 
 def parse_json(text: str | None) -> dict | None:
