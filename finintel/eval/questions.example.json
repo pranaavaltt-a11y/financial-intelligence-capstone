@@ -1,0 +1,14 @@
+[
+  {"id": "q1", "question": "What was Apple's revenue in FY2023?", "ticker": "AAPL", "year": 2023,
+   "answer_value": null, "answer_unit": "USD", "tolerance_pct": 0.5, "evidence_contains": null,
+   "note": "Fill answer_value from the FY2023 10-K income statement before running."},
+  {"id": "q2", "question": "How did Microsoft's operating margin change from FY2022 to FY2024?", "ticker": "MSFT",
+   "year": 2024, "answer_value": null, "answer_unit": "pp", "tolerance_pct": 2.0, "evidence_contains": null},
+  {"id": "q3", "question": "Why did NVIDIA's revenue grow in FY2024?", "ticker": "NVDA", "year": 2024,
+   "answer_value": null, "answer_unit": "%", "tolerance_pct": 1.0, "evidence_contains": ["data center"]},
+  {"id": "q4", "question": "Compare the net margin of Apple and Microsoft in FY2023.", "ticker": "AAPL",
+   "year": 2023, "answer_value": null, "answer_unit": "%", "tolerance_pct": 1.0, "evidence_contains": null},
+  {"id": "q5", "question": "What are the main risk factors Amazon describes about competition?", "ticker": "AMZN",
+   "year": 2023, "answer_value": null, "answer_unit": null, "tolerance_pct": null,
+   "evidence_contains": ["competition"]}
+]

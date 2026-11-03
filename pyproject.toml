@@ -1,0 +1,9 @@
+[project]
+name = "finintel"
+version = "0.1.0"
+description = "Evidence-grounded financial document analysis over SEC filings"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
