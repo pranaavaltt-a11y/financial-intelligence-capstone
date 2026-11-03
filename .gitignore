@@ -4,8 +4,8 @@ __pycache__/
 .venv/
 venv/
 .env
-data/
-sample_data/
+/data/
+/sample_data/
 eval_results.json
 *.duckdb
 *.duckdb.wal
