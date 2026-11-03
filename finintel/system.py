@@ -15,7 +15,7 @@ from finintel.data.warehouse import Warehouse
 from finintel.index.parse import parse_file
 from finintel.ingest.xbrl import extract_facts
 from finintel.models import read_chunks, write_jsonl
-from finintel.retrieval.dense import Embedder, GeminiEmbedder, TfidfEmbedder
+from finintel.retrieval.dense import Embedder, EmbeddingQuotaExhausted, GeminiEmbedder, TfidfEmbedder
 from finintel.retrieval.hybrid import HybridRetriever
 
 log = logging.getLogger(__name__)
@@ -62,19 +62,31 @@ def build(settings: Settings, years: list[int] | None = None, use_gemini: bool |
     wh.close()
     write_jsonl(settings.chunks_path, chunks)
     emb = choose_embedder(settings, use_gemini)
+    note = None
     if chunks:
-        vecs = emb.fit([c.text for c in chunks])
+        try:
+            vecs = emb.fit([c.text for c in chunks])
+        except EmbeddingQuotaExhausted as exc:
+            note = (f"{exc}. Finished batches are cached - run build again later to resume. "
+                    "Using offline TF-IDF search for now.")
+            log.warning(note)
+            emb = TfidfEmbedder()
+            vecs = emb.fit([c.text for c in chunks])
         if emb.name != "tfidf":   # TF-IDF is refit on load; only store real embeddings
             np.save(settings.embeddings_path, vecs)
         settings.chunks_path.with_suffix(".embedder").write_text(emb.name)
-    return {"chunks": len(chunks), "facts": n_facts}
+    out = {"chunks": len(chunks), "facts": n_facts, "search": emb.name}
+    if note:
+        out["note"] = note
+    return out
 
 
 def choose_embedder(settings: Settings, use_gemini: bool | None = None) -> Embedder:
     want = bool(settings.gemini_api_key) if use_gemini is None else use_gemini
     if want and settings.gemini_api_key:
         try:
-            return GeminiEmbedder(settings.gemini_api_key, settings.embed_model)
+            return GeminiEmbedder(settings.gemini_api_key, settings.embed_model,
+                                  cache_dir=settings.data_dir / "processed" / "emb_cache")
         except Exception as exc:
             log.warning("Gemini embeddings unavailable (%s); using TF-IDF", exc)
     return TfidfEmbedder()

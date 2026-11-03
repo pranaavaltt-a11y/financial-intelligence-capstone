@@ -9,9 +9,10 @@
 from __future__ import annotations
 
 import re
+import warnings
 from pathlib import Path
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup, Tag, XMLParsedAsHTMLWarning
 
 from finintel.models import Chunk
 
@@ -46,6 +47,10 @@ def _section_for(line: str, current: str) -> str:
         return current
     key = m.group(1).lower()
     return SECTION_NAMES.get(key, f"Item {key.upper()}")
+
+
+# 10-Ks are inline-XBRL XHTML; the HTML parser handles them fine (and copes with sloppy markup better).
+warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 
 def parse_filing(html: str, ticker: str, fiscal_year: int, source: str = "",
