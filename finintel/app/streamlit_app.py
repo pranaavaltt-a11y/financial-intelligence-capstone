@@ -36,7 +36,10 @@ with st.sidebar:
     if not status["companies"]:
         st.warning("No data loaded. Run `python -m finintel ingest ...` then `python -m finintel build`.")
     for t, info in status["companies"].items():
-        st.write(f"**{t}** - {info['name']}  \nFY {', '.join(map(str, info['years']))}")
+        yrs = info["years"]
+        span = f"FY{yrs[0]}-FY{yrs[-1]}" if yrs else "none"
+        txt = ", ".join(map(str, info.get("text_years", []))) or "none"
+        st.write(f"**{t}** - {info['name']}  \nNumbers: {span}  \n10-K text: FY {txt}")
     st.write(f"Passages indexed: {status['chunks']:,}")
     use_llm = st.toggle("Use LLM (Gemini)", value=bool(settings.gemini_api_key),
                         disabled=not settings.gemini_api_key,
@@ -52,7 +55,8 @@ with tab_ask:
     examples = ["How did {t}'s operating margin change from FY{y0} to FY{y1}, and why?",
                 "What was {t}'s revenue in FY{y1}?", "What are {t}'s main risk factors about competition?"]
     first = next(iter(status["companies"]))
-    ys = status["companies"][first]["years"] or [0]
+    info = status["companies"][first]
+    ys = info.get("text_years") or info["years"][-3:] or [0]      # years with filing text to explain changes
     ex = [e.format(t=first, y0=ys[0], y1=ys[-1]) for e in examples]
     q = st.text_input("Question", value=ex[0])
     st.caption("Examples: " + " | ".join(ex[1:]))

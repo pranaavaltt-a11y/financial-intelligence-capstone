@@ -56,6 +56,7 @@ def extract_numbers(text: str) -> list[tuple[str, float, int, float]]:
     """Return (raw, value, decimals, scale) for each figure, skipping bare years like 2023 and FY2023."""
     out = []
     clean = re.sub(r"\bFY\s?\d{4}\b", " ", _strip_refs(text), flags=re.I)
+    clean = re.sub(r"\b(?:10-K|10-Q|8-K|20-F)\b|\bItem\s+\d+[A-C]?\b", " ", clean, flags=re.I)  # form / item names
     for m in NUM_RE.finditer(clean):
         raw = m.group(0).strip()
         num = m.group("num").replace(",", "")

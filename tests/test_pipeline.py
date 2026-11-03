@@ -80,3 +80,11 @@ def test_unverifiable_llm_falls_back_to_template(settings):
     base = load(settings, use_llm=False)
     ans = FinancialQA(base.wh, base.retriever, BrokenLLM()).ask("What was Example Corp's revenue in FY2023?")
     assert not ans.used_llm and "$99.00 billion" in ans.text and ans.verification.passed
+
+
+def test_explanation_found_when_asked_years_have_no_filing_text(qa):
+    # Regression: real data has XBRL numbers for ~20 years but 10-K text for only a few.
+    ans = qa.ask("How did Example Corp's operating margin change from FY2021 to FY2022, and why?")
+    assert ans.verification.passed, (ans.text, ans.verification)
+    assert any(c.ref.startswith("S") for c in ans.citations)
+    assert "25.0%" in ans.text and "26.7%" in ans.text

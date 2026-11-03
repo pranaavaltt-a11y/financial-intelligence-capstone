@@ -78,3 +78,9 @@ def test_verify_citation_to_missing_passage():
     facts, calcs, passages = _ev()
     rep = verify("Sales grew because of subscription software [S9].", facts, calcs, passages, 2, 2)
     assert rep.unsupported_claims
+
+
+def test_form_and_item_names_are_not_figures():
+    # Regression: the "10" in "10-K" was flagged as an unsupported number.
+    nums = extract_numbers("Context from AAPL's FY2024 10-K (Item 7 MD&A) and the 10-Q, Item 1A.")
+    assert nums == []

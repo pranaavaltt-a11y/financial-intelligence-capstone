@@ -175,7 +175,7 @@ class FinancialQA:
                     sents.append(f"In FY{y}, {self._company(t, names)} had the highest {label} [{r}].")
         for ref, ch in ev.passages.items():
             words = ch.text.split()
-            quote = " ".join(words[:45]) + ("..." if len(words) > 45 else "")
+            quote = (" ".join(words[:45]) + ("..." if len(words) > 45 else "")).replace('"', "'")
             sents.append(f"Context from {ch.ticker}'s FY{ch.fiscal_year} 10-K ({ch.section}): \"{quote}\" [{ref}].")
         for m in ev.missing:
             sents.append(f"Not available in the loaded data: {m}.")
@@ -216,7 +216,8 @@ class FinancialQA:
             candidates.append((self.template_answer(plan, ev), False))
             for text, used_llm in candidates:
                 rep = verify(text, ev.facts, ev.calcs, ev.passages, ev.requested, ev.found)
-                if best is None or rep.confidence > best[2].confidence:
+                key = self._rank(rep, ev, plan)
+                if best is None or key > self._rank(best[2], best[1], plan):
                     best = (text, ev, rep, used_llm)
                 if rep.passed:
                     break
@@ -224,6 +225,12 @@ class FinancialQA:
                 break      # verified, and has an explanation if one was asked for
         text, ev, rep, used_llm = best  # type: ignore[misc]
         return Answer(question, text, list(ev.calcs.values()), self._citations(ev, text), rep, used_llm, attempts)
+
+    @staticmethod
+    def _rank(rep, ev: Evidence, plan: Plan) -> tuple:
+        """Prefer verified answers, then ones that include the explanation asked for, then confidence."""
+        explained = bool(ev.passages) or not plan.needs_explanation
+        return (rep.passed, explained, rep.confidence)
 
     @staticmethod
     def _citations(ev: Evidence, text: str) -> list[Citation]:

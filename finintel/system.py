@@ -116,6 +116,9 @@ def data_status(settings: Settings) -> dict:
         wh = Warehouse(settings.warehouse_path)
         out["companies"] = {t: {"name": n, "years": wh.years(t)} for t, n in wh.companies().items()}
         wh.close()
-    out["chunks"] = len(read_chunks(settings.chunks_path))
+    chunks = read_chunks(settings.chunks_path)
+    out["chunks"] = len(chunks)
+    for t, info in out["companies"].items():   # years that have filing text, not just XBRL numbers
+        info["text_years"] = sorted({c.fiscal_year for c in chunks if c.ticker == t})
     out["llm"] = "gemini" if settings.gemini_api_key else "none (template answers)"
     return out
