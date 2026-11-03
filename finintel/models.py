@@ -98,6 +98,7 @@ class Answer:
     verification: VerificationReport
     used_llm: bool = False
     attempts: int = 1
+    notes: list[str] = field(default_factory=list)   # why the LLM answer was or wasn't used
 
     def to_markdown(self) -> str:
         lines = [self.text, ""]
@@ -110,7 +111,9 @@ class Answer:
         v = self.verification
         lines += ["", f"**Confidence:** {v.confidence_label} ({v.confidence:.2f}) - "
                       f"{v.numbers_supported}/{v.numbers_checked} numbers and "
-                      f"{v.claims_supported}/{v.claims_checked} claims verified"]
+                      f"{v.claims_supported}/{v.claims_checked} claims verified - "
+                      f"{'Gemini-written' if self.used_llm else 'template'} answer"]
+        lines += [f"Note: {n}" for n in self.notes]
         return "\n".join(lines)
 
 

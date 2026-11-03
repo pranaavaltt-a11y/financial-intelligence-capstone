@@ -88,3 +88,11 @@ def test_explanation_found_when_asked_years_have_no_filing_text(qa):
     assert ans.verification.passed, (ans.text, ans.verification)
     assert any(c.ref.startswith("S") for c in ans.citations)
     assert "25.0%" in ans.text and "26.7%" in ans.text
+
+
+def test_notes_explain_why_template_was_used(settings):
+    build(settings, use_gemini=False)
+    base = load(settings, use_llm=False)
+    ans = FinancialQA(base.wh, base.retriever, BrokenLLM()).ask("What was Example Corp's revenue in FY2023?")
+    assert any("failed verification" in n for n in ans.notes)
+    assert any("template answer is shown" in n for n in ans.notes)

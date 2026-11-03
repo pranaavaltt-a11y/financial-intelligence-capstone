@@ -70,6 +70,8 @@ with tab_ask:
         st.caption(f"{v.numbers_supported}/{v.numbers_checked} numbers verified - "
                    f"{v.claims_supported}/{v.claims_checked} cited claims supported - "
                    f"{'LLM' if ans.used_llm else 'template'} answer - attempt(s): {ans.attempts}")
+        for n in ans.notes:
+            st.info(n)
         if v.unsupported_numbers or v.unsupported_claims:
             st.error(f"Unverified: {v.unsupported_numbers + v.unsupported_claims}")
         if ans.calculations:

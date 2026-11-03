@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from finintel.agent import tools
@@ -22,6 +23,8 @@ from finintel.agent.verifier import verify
 from finintel.data.warehouse import Warehouse
 from finintel.models import Answer, Calculation, Chunk, Citation, Fact, fmt_value
 from finintel.retrieval.hybrid import HybridRetriever
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -200,15 +203,22 @@ class FinancialQA:
     def ask(self, question: str) -> Answer:
         plan = self.plan(question)
         attempts = 0
+        notes: list[str] = []
         best: tuple[str, Evidence, object, bool] | None = None
         for widen in [False] + [True] * self.max_retries:
             attempts += 1
             ev = self.gather(question, plan, widen=widen)
             candidates: list[tuple[str, bool]] = []
             draft = self._llm_answer(question, ev)
+            if self.llm and not draft:
+                notes.append("Gemini did not return an answer (rate limit or error) - template answer used.")
             if draft:
                 rep = verify(draft, ev.facts, ev.calcs, ev.passages, ev.requested, ev.found)
                 if not rep.passed and (rep.unsupported_numbers or rep.unsupported_claims):
+                    log.warning("Gemini draft rejected by verifier - numbers: %s; sentences: %s",
+                                rep.unsupported_numbers, rep.unsupported_claims)
+                    notes.append(f"Gemini's first draft failed verification (numbers {rep.unsupported_numbers}, "
+                                 f"{len(rep.unsupported_claims)} unsupported sentence(s)); asked it to correct.")
                     fb = ("\nYour previous draft had unsupported content; fix it. Unsupported numbers: "
                           f"{rep.unsupported_numbers}. Unsupported sentences: {rep.unsupported_claims}.")
                     draft2 = self._llm_answer(question, ev, fb)
@@ -226,7 +236,11 @@ class FinancialQA:
             if best and best[2].passed and (not plan.needs_explanation or best[1].passages):
                 break      # verified, and has an explanation if one was asked for
         text, ev, rep, used_llm = best  # type: ignore[misc]
-        return Answer(question, text, list(ev.calcs.values()), self._citations(ev, text), rep, used_llm, attempts)
+        if self.llm and not used_llm:
+            log.warning("Showing the template answer: no Gemini draft passed verification")
+            notes.append("No Gemini draft passed verification - the verified template answer is shown.")
+        return Answer(question, text, list(ev.calcs.values()), self._citations(ev, text), rep, used_llm, attempts,
+                      notes)
 
     @staticmethod
     def _rank(rep, ev: Evidence, plan: Plan) -> tuple:
