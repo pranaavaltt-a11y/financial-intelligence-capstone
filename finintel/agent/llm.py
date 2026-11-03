@@ -20,25 +20,52 @@ class LLM(Protocol):
     def generate(self, prompt: str, as_json: bool = False) -> str | None: ...
 
 
-class GeminiLLM:
-    def __init__(self, api_key: str, model: str = "gemini-2.5-flash"):
-        from google import genai
+# Tried in order when a model is retired (HTTP 404). Google's error message usually names the replacement,
+# which is tried first; FININTEL_LLM_MODEL overrides the default.
+FALLBACK_MODELS = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-2.5-flash"]
 
-        self.client = genai.Client(api_key=api_key)
+
+def suggested_model(message: str) -> str | None:
+    """Pull 'models/<name>' recommended in a 'model is no longer available' error."""
+    m = re.search(r"(?:use|to use)\s+models/([\w.\-]+)", message)
+    return m.group(1) if m else None
+
+
+class GeminiLLM:
+    def __init__(self, api_key: str, model: str = FALLBACK_MODELS[0], client=None):
+        if client is None:
+            from google import genai
+
+            client = genai.Client(api_key=api_key)
+        self.client = client
         self.model = model
         self.name = model
+        self._tried: set[str] = set()
+
+    def _candidates(self, failed: str, message: str) -> list[str]:
+        out = [suggested_model(message)] + FALLBACK_MODELS
+        return [m for m in out if m and m != failed and m not in self._tried]
 
     def generate(self, prompt: str, as_json: bool = False) -> str | None:
         from google.genai import types
 
-        try:
-            cfg = types.GenerateContentConfig(temperature=0.0,
-                                              response_mime_type="application/json" if as_json else "text/plain")
-            res = self.client.models.generate_content(model=self.model, contents=prompt, config=cfg)
-            return res.text
-        except Exception as exc:  # quota, network, safety block - degrade gracefully
-            log.warning("LLM call failed: %s", exc)
-            return None
+        cfg = types.GenerateContentConfig(temperature=0.0,
+                                          response_mime_type="application/json" if as_json else "text/plain")
+        while True:
+            try:
+                res = self.client.models.generate_content(model=self.model, contents=prompt, config=cfg)
+                return res.text
+            except Exception as exc:  # quota, network, safety block, retired model
+                msg = str(exc)
+                if "404" in msg or "NOT_FOUND" in msg:
+                    self._tried.add(self.model)
+                    nxt = self._candidates(self.model, msg)
+                    if nxt:
+                        log.warning("Model %s unavailable; switching to %s", self.model, nxt[0])
+                        self.model = self.name = nxt[0]
+                        continue
+                log.warning("LLM call failed: %s", exc)
+                return None
 
 
 def parse_json(text: str | None) -> dict | None:
@@ -51,7 +78,7 @@ def parse_json(text: str | None) -> dict | None:
         return None
 
 
-def make_llm(api_key: str | None, model: str) -> LLM | None:
+def make_llm(api_key: str | None, model: str = FALLBACK_MODELS[0]) -> LLM | None:
     if not api_key:
         return None
     try:

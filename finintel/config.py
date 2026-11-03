@@ -15,7 +15,7 @@ from pathlib import Path
 class Settings:
     data_dir: Path = field(default_factory=lambda: Path(os.environ.get("FININTEL_DATA_DIR", "data")))
     gemini_api_key: str | None = field(default_factory=lambda: os.environ.get("GEMINI_API_KEY") or None)
-    llm_model: str = field(default_factory=lambda: os.environ.get("FININTEL_LLM_MODEL", "gemini-2.5-flash"))
+    llm_model: str = field(default_factory=lambda: os.environ.get("FININTEL_LLM_MODEL", "gemini-3.8-flash"))
     embed_model: str = field(default_factory=lambda: os.environ.get("FININTEL_EMBED_MODEL", "gemini-embedding-001"))
     # The SEC asks automated clients to identify themselves, e.g. "Team Name contact@example.edu".
     sec_user_agent: str | None = field(default_factory=lambda: os.environ.get("SEC_USER_AGENT") or None)

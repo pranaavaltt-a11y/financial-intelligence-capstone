@@ -78,7 +78,7 @@ with tab_ask:
             st.markdown("#### Calculations")
             st.dataframe(pd.DataFrame([{"Calculation": c.label, "Result": fmt_value(c.value, c.unit),
                                         "Formula": c.formula, "Inputs": ", ".join(c.inputs)}
-                                       for c in ans.calculations]), hide_index=True, use_container_width=True)
+                                       for c in ans.calculations]), hide_index=True, width="stretch")
         st.markdown("#### Sources")
         for c in ans.citations:
             with st.expander(f"[{c.ref}] {c.description}"):
@@ -105,7 +105,7 @@ with tab_compare:
             scaled = table / 1e9 if unit == "USD" else table
             st.markdown(f"**{LABELS.get(metric, metric)}** " + ("(USD billions)" if unit == "USD" else f"({unit})"))
             st.bar_chart(scaled, stack=False)
-            st.dataframe(scaled.round(2), use_container_width=True)
+            st.dataframe(scaled.round(2), width="stretch")
             if unit == "USD":
                 parts = []
                 for t in table.columns:
