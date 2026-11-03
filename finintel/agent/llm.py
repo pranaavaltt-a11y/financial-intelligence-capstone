@@ -37,18 +37,25 @@ class GeminiLLM:
     * 404 (model retired)        -> switch to the model Google recommends, then the fallback list
     * 503 / 500 (overloaded)     -> wait 2s, 4s, 8s and retry; if still failing, try the next model
     * 429 per-minute rate limit  -> wait the delay Google asks for and retry
-    * 429 daily quota, bad key   -> give up (caller falls back to the verified template answer)
+    * no reply within 30s        -> treated as overloaded
+    * 429 daily quota, bad key,
+      or 60s spent on one call   -> give up (caller falls back to the verified template answer)
     """
 
     def __init__(self, api_key: str, model: str = FALLBACK_MODELS[0], client=None, sleep=None,
-                 retries: int = 3, max_wait: float = 20.0):
+                 retries: int = 3, max_wait: float = 20.0, timeout_s: float = 30.0, budget_s: float = 60.0,
+                 clock=None):
         if client is None:
             from google import genai
+            from google.genai import types
 
-            client = genai.Client(api_key=api_key)
+            # A request that never answers is treated like any other failure (it used to hang forever).
+            client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=int(timeout_s * 1000)))
         import time
 
         self.client = client
+        self.clock = clock or time.monotonic
+        self.budget_s = budget_s
         self.model = model
         self.name = model
         self.sleep = sleep or time.sleep
@@ -72,7 +79,11 @@ class GeminiLLM:
         cfg = types.GenerateContentConfig(temperature=0.0,
                                           response_mime_type="application/json" if as_json else "text/plain")
         attempt = 0
+        start = self.clock()
         while True:
+            if self.clock() - start > self.budget_s:
+                self.last_error = (self.last_error or "") + " (gave up after the time limit)"
+                break
             try:
                 res = self.client.models.generate_content(model=self.model, contents=prompt, config=cfg)
                 self.last_error = None
@@ -85,7 +96,8 @@ class GeminiLLM:
                         attempt = 0
                         continue
                     break
-                transient = any(k in msg for k in ("503", "UNAVAILABLE", "500", "INTERNAL", "overloaded"))
+                transient = any(k in msg for k in ("503", "UNAVAILABLE", "500", "INTERNAL", "overloaded",
+                                                   "timed out", "Timeout", "timeout"))
                 per_minute = ("429" in msg or "RESOURCE_EXHAUSTED" in msg) and not re.search(r"PerDay|per day", msg)
                 if transient or per_minute:
                     if attempt < self.retries:

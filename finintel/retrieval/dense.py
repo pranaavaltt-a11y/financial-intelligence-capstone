@@ -73,8 +73,9 @@ class GeminiEmbedder:
                  sleep=time.sleep, client=None):
         if client is None:
             from google import genai  # imported lazily so the offline path has no dependency on it
+            from google.genai import types
 
-            client = genai.Client(api_key=api_key)
+            client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=60_000))
         self.client = client
         self.model = model
         self.batch = batch

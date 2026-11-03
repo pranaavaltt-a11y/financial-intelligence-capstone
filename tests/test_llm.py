@@ -86,3 +86,34 @@ def test_daily_quota_is_not_retried():
     slept = []
     llm = GeminiLLM("k", client=SimpleNamespace(models=Daily()), sleep=slept.append)
     assert llm.generate("q") is None and slept == [] and "429" in llm.last_error
+
+
+class HangingModels:
+    """Simulates a request that times out (the httpx error the SDK raises)."""
+
+    def __init__(self, bad):
+        self.bad, self.seen = bad, []
+
+    def generate_content(self, model, contents, config):
+        self.seen.append(model)
+        if model in self.bad:
+            raise TimeoutError("The read operation timed out")
+        return SimpleNamespace(text=f"answer from {model}")
+
+
+def test_timeout_is_retried_then_switches_model():
+    llm = GeminiLLM("k", client=SimpleNamespace(models=HangingModels({"gemini-3.8-flash"})), sleep=lambda s: None)
+    assert llm.generate("q") == "answer from gemini-flash-latest"
+
+
+def test_overall_time_budget_stops_retrying():
+    t = [0.0]
+
+    def sleep(s):
+        t[0] += s
+
+    llm = GeminiLLM("k", client=SimpleNamespace(models=HangingModels({"gemini-3.8-flash", "gemini-flash-latest",
+                                                                       "gemini-2.5-flash"})),
+                    sleep=sleep, clock=lambda: t[0], budget_s=10)
+    assert llm.generate("q") is None and "time limit" in llm.last_error
+    assert t[0] <= 10 + 8

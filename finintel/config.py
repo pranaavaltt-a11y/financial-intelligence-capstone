@@ -19,6 +19,7 @@ class Settings:
     embed_model: str = field(default_factory=lambda: os.environ.get("FININTEL_EMBED_MODEL", "gemini-embedding-001"))
     # The SEC asks automated clients to identify themselves, e.g. "Team Name contact@example.edu".
     sec_user_agent: str | None = field(default_factory=lambda: os.environ.get("SEC_USER_AGENT") or None)
+    llm_planner: bool = field(default_factory=lambda: os.environ.get("FININTEL_LLM_PLAN", "0") == "1")
     top_k: int = 8          # passages kept after reranking (Multi-HyDE paper: K = 8)
     candidates: int = 25    # passages fused from BM25 + dense before reranking
     max_retries: int = 1    # verification-triggered re-retrievals

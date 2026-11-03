@@ -107,7 +107,8 @@ def load(settings: Settings, use_llm: bool = True) -> FinancialQA:
             log.warning("Index was built with %s but loading with %s; refitting", kind, emb.name)
         retriever = HybridRetriever(chunks, emb, vectors=vectors)
     llm = make_llm(settings.gemini_api_key, settings.llm_model) if use_llm else None
-    return FinancialQA(wh, retriever, llm, top_k=settings.top_k, max_retries=settings.max_retries)
+    return FinancialQA(wh, retriever, llm, top_k=settings.top_k, max_retries=settings.max_retries,
+                       llm_planner=settings.llm_planner)
 
 
 def data_status(settings: Settings) -> dict:

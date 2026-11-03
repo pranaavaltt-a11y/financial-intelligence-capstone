@@ -39,20 +39,21 @@ class Evidence:
 
 class FinancialQA:
     def __init__(self, warehouse: Warehouse, retriever: HybridRetriever | None, llm: LLM | None = None,
-                 top_k: int = 8, passages_in_answer: int = 2, max_retries: int = 1):
+                 top_k: int = 8, passages_in_answer: int = 2, max_retries: int = 1, llm_planner: bool = False):
         self.wh = warehouse
         self.retriever = retriever
         self.llm = llm
         self.top_k = top_k
         self.passages_in_answer = passages_in_answer
         self.max_retries = max_retries
+        self.llm_planner = llm_planner   # off by default: rules plan well and it saves one LLM call per question
 
     # ---------------- planning ----------------
     def plan(self, question: str) -> Plan:
         companies = self.wh.companies()
         years = self.wh.years()
         plan = rule_plan(question, companies, years)
-        if self.llm:
+        if self.llm and self.llm_planner:
             raw = self.llm.generate(PLAN_PROMPT.format(companies=companies, metrics=self.wh.metrics() + list(DERIVED),
                                                        years=years, question=question), as_json=True)
             plan = merge_llm_plan(plan, parse_json(raw), companies, set(self.wh.metrics()), years)
