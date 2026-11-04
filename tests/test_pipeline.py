@@ -112,3 +112,12 @@ def test_note_explains_overload_without_claiming_a_draft_failed(settings):
     ans = FinancialQA(base.wh, base.retriever, SilentLLM()).ask("What was Example Corp's revenue in FY2023?")
     assert ans.notes == ["Gemini did not return an answer (Google's servers were overloaded) - "
                          "showing the verified template answer."]
+
+
+def test_text_only_question_answers_from_filing(qa):
+    # Regression: "risk" questions used to get a revenue figure instead of filing passages.
+    ans = qa.ask("What are Example Corp's main risk factors about competition?")
+    assert ans.verification.passed
+    cited = [c for c in ans.citations if c.ref.startswith("S")]
+    assert cited and "Risk Factors" in cited[0].description
+    assert "Competition" in cited[0].snippet and "$" not in ans.text.split("Context")[0]

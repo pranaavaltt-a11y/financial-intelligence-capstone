@@ -84,3 +84,10 @@ def test_form_and_item_names_are_not_figures():
     # Regression: the "10" in "10-K" was flagged as an unsupported number.
     nums = extract_numbers("Context from AAPL's FY2024 10-K (Item 7 MD&A) and the 10-Q, Item 1A.")
     assert nums == []
+
+
+def test_text_only_plan_has_no_metric_or_year():
+    p = rule_plan("What does Example Corp say about supply chain risks?", COMPANIES, YEARS)
+    assert p.metrics == [] and p.years == [] and p.needs_explanation
+    # a metric question is unaffected
+    assert rule_plan("Example Corp revenue in 2023", COMPANIES, YEARS).metrics == ["revenue"]

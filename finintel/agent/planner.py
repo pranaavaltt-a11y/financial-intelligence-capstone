@@ -36,6 +36,11 @@ CHANGE_WORDS = re.compile(r"\b(change|changed|changes|grow|grew|grown|growing|gr
                           r"trend|over the|from)\b", re.I)
 COMPARE_WORDS = re.compile(r"\b(compare|compared|comparison|versus|vs\.?|against|higher|lower|better|worse)\b", re.I)
 WHY_WORDS = re.compile(r"\b(why|reason|reasons|explain|driver|drivers|drove|caused|because|what led)\b", re.I)
+# Questions about what the filing says (risks, strategy, competition) are answered from text alone.
+TEXT_WORDS = re.compile(r"\b(risk|risks|describe|describes|discuss|discusses|mention|mentions|say|says|strategy|"
+                        r"competition|competitors|compete|challenges|threats|outlook|plans?|segments?|products?|"
+                        r"customers|supply chain|regulation|regulatory|litigation|legal|cybersecurity|ai|"
+                        r"artificial intelligence|employees|business model)\b", re.I)
 CAGR_WORDS = re.compile(r"\b(cagr|compound(ed)? annual)\b", re.I)
 YEAR_RE = re.compile(r"\b(?:FY\s?|fiscal\s+(?:year\s+)?)?((?:19|20)\d{2})\b", re.I)
 
@@ -102,8 +107,12 @@ def rule_plan(question: str, companies: dict[str, str], years_available: list[in
     tickers = find_companies(question, companies)
     if not tickers:
         notes.append("No known company named in the question.")
-    metrics = find_metrics(question) or ["revenue"]
-    if not find_metrics(question):
+    metrics = find_metrics(question)
+    text_only = not metrics and bool(TEXT_WORDS.search(question))
+    if text_only:
+        notes.append("No financial metric asked for; answering from the filing text.")
+    elif not metrics:
+        metrics = ["revenue"]
         notes.append("No metric recognised; defaulting to revenue.")
     years = sorted({int(y) for y in YEAR_RE.findall(question)})
 
@@ -128,7 +137,12 @@ def rule_plan(question: str, companies: dict[str, str], years_available: list[in
         prev = [y for y in avail if y < years[0]]
         if prev:
             years = [prev[-1], years[0]]
-    return Plan(tickers, metrics, years, op, bool(WHY_WORDS.search(question)), notes)
+    if text_only:
+        op = "lookup"
+        if not YEAR_RE.findall(question):       # search every filing year rather than guess one
+            years = []
+            notes = [n for n in notes if not n.startswith("No year given")]
+    return Plan(tickers, metrics, years, op, bool(WHY_WORDS.search(question)) or text_only, notes)
 
 
 def merge_llm_plan(rule: Plan, llm_json: dict | None, companies: dict[str, str], metrics_known: set[str],
