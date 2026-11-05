@@ -65,7 +65,7 @@ class FlakyModels:
 
 def test_retries_when_google_is_overloaded():
     slept = []
-    llm = GeminiLLM("k", client=SimpleNamespace(models=FlakyModels(fails=2)), sleep=slept.append)
+    llm = GeminiLLM("k", client=SimpleNamespace(models=FlakyModels(fails=2)), sleep=slept.append, retries=3)
     assert llm.generate("q") == "answer from gemini-3.8-flash"
     assert slept == [2.0, 4.0]
 
@@ -73,7 +73,7 @@ def test_retries_when_google_is_overloaded():
 def test_switches_model_when_one_stays_overloaded():
     slept = []
     models = FlakyModels(fails=99)
-    llm = GeminiLLM("k", client=SimpleNamespace(models=models), sleep=slept.append)
+    llm = GeminiLLM("k", client=SimpleNamespace(models=models), sleep=slept.append, retries=3)
     assert llm.generate("q") == "answer from gemini-flash-latest"
     assert len(slept) == 3 and llm.model == "gemini-flash-latest"
 
@@ -114,6 +114,45 @@ def test_overall_time_budget_stops_retrying():
 
     llm = GeminiLLM("k", client=SimpleNamespace(models=HangingModels({"gemini-3.8-flash", "gemini-flash-latest",
                                                                        "gemini-2.5-flash"})),
-                    sleep=sleep, clock=lambda: t[0], budget_s=10)
+                    sleep=sleep, clock=lambda: t[0], budget_s=10, retries=3)
     assert llm.generate("q") is None and "time limit" in llm.last_error
     assert t[0] <= 10 + 8
+
+
+
+def test_after_a_failure_gemini_is_skipped_for_a_while():
+    t = [0.0]
+    models = HangingModels({"gemini-3.8-flash", "gemini-flash-latest", "gemini-2.5-flash"})
+    llm = GeminiLLM("k", client=SimpleNamespace(models=models), sleep=lambda s: t.__setitem__(0, t[0] + s),
+                    clock=lambda: t[0], cooldown_s=300)
+    assert llm.generate("q") is None
+    calls = len(models.seen)
+    assert llm.generate("q2") is None and len(models.seen) == calls      # skipped instantly
+    assert "skipped" in llm.last_error
+    t[0] += 301
+    llm.generate("q3")
+    assert len(models.seen) > calls                                          # tries again after the cooldown
+
+
+def test_check_models_lists_and_tries_text_models(monkeypatch):
+    from google import genai
+
+    from finintel.agent.llm import check_models
+
+    listed = [SimpleNamespace(name="models/gemini-9-flash", supported_actions=["generateContent"]),
+              SimpleNamespace(name="models/gemini-9-pro", supported_actions=["generateContent"]),
+              SimpleNamespace(name="models/gemini-embedding-001", supported_actions=["embedContent"])]
+
+    class FakeClient:
+        def __init__(self, **kw):
+            self.models = SimpleNamespace(list=lambda: listed, generate_content=self.gen)
+
+        def gen(self, model, contents, config):
+            if model == "gemini-9-pro":
+                raise errors.ServerError(503, {"error": {"code": 503, "message": "busy", "status": "UNAVAILABLE"}})
+            return SimpleNamespace(text="OK")
+
+    monkeypatch.setattr(genai, "Client", FakeClient)
+    res = check_models("k")
+    assert [r["model"] for r in res] == ["gemini-9-flash", "gemini-9-pro"]
+    assert res[0]["ok"] and not res[1]["ok"]

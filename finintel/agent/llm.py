@@ -35,16 +35,17 @@ class GeminiLLM:
     """Gemini text generation that survives the free tier's rough edges.
 
     * 404 (model retired)        -> switch to the model Google recommends, then the fallback list
-    * 503 / 500 (overloaded)     -> wait 2s, 4s, 8s and retry; if still failing, try the next model
-    * 429 per-minute rate limit  -> wait the delay Google asks for and retry
-    * no reply within 30s        -> treated as overloaded
+    * 503 / 500 (overloaded)     -> wait 2s and retry once; if still failing, try the next model
+    * 429 per-minute rate limit  -> wait the delay Google asks for (max 10s) and retry
+    * no reply within 15s        -> treated as overloaded
     * 429 daily quota, bad key,
-      or 60s spent on one call   -> give up (caller falls back to the verified template answer)
+      or 25s spent on one call   -> give up (caller falls back to the verified template answer)
+    * after a failure Gemini is skipped for 5 minutes, so the app stays fast while Google is down
     """
 
     def __init__(self, api_key: str, model: str = FALLBACK_MODELS[0], client=None, sleep=None,
-                 retries: int = 3, max_wait: float = 20.0, timeout_s: float = 30.0, budget_s: float = 60.0,
-                 clock=None):
+                 retries: int = 1, max_wait: float = 10.0, timeout_s: float = 15.0, budget_s: float = 25.0,
+                 clock=None, cooldown_s: float = 300.0):
         if client is None:
             from google import genai
             from google.genai import types
@@ -63,6 +64,8 @@ class GeminiLLM:
         self.max_wait = max_wait
         self._tried: set[str] = set()
         self.last_error: str | None = None
+        self.cooldown_s = cooldown_s
+        self.down_until = 0.0
 
     def _next_model(self, message: str) -> bool:
         self._tried.add(self.model)
@@ -78,6 +81,9 @@ class GeminiLLM:
 
         cfg = types.GenerateContentConfig(temperature=0.0,
                                           response_mime_type="application/json" if as_json else "text/plain")
+        if self.clock() < self.down_until:
+            self.last_error = "skipped: Gemini failed in the last few minutes (" + (self.last_error or "") + ")"
+            return None
         attempt = 0
         start = self.clock()
         while True:
@@ -113,7 +119,41 @@ class GeminiLLM:
                         continue
                 break
         log.warning("LLM call failed: %s", self.last_error)
+        self.down_until = self.clock() + self.cooldown_s
+        if self.cooldown_s:
+            log.warning("Skipping Gemini for %.0f minutes; answers use the verified template meanwhile",
+                        self.cooldown_s / 60)
         return None
+
+
+def check_models(api_key: str, timeout_s: float = 15.0) -> list[dict]:
+    """List the text models this key can use and try each with a tiny prompt (for `finintel check-llm`)."""
+    import time
+
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=int(timeout_s * 1000)))
+    names = []
+    for m in client.models.list():
+        actions = getattr(m, "supported_actions", None) or []
+        name = (m.name or "").removeprefix("models/")
+        if "generateContent" in actions and "gemini" in name and not any(
+                k in name for k in ("embedding", "image", "tts", "audio", "live", "vision")):
+            names.append(name)
+    flash_first = sorted(names, key=lambda n: (0 if "flash" in n else 1, "lite" in n, n))
+    out = []
+    for name in flash_first[:8]:
+        t0 = time.monotonic()
+        try:
+            res = client.models.generate_content(model=name, contents="Reply with the single word OK.",
+                                                 config=types.GenerateContentConfig(temperature=0.0))
+            out.append({"model": name, "ok": True, "seconds": round(time.monotonic() - t0, 1),
+                        "reply": (res.text or "").strip()[:20]})
+        except Exception as exc:
+            out.append({"model": name, "ok": False, "seconds": round(time.monotonic() - t0, 1),
+                        "error": str(exc)[:140]})
+    return out
 
 
 def parse_json(text: str | None) -> dict | None:

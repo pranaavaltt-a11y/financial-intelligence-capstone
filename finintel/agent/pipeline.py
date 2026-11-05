@@ -211,7 +211,7 @@ class FinancialQA:
             attempts += 1
             ev = self.gather(question, plan, widen=widen)
             candidates: list[tuple[str, bool]] = []
-            draft = self._llm_answer(question, ev)
+            draft = None if (self.llm and attempts > 1 and not got_draft) else self._llm_answer(question, ev)
             if self.llm and not draft:
                 err = getattr(self.llm, "last_error", None) or "no response"
                 reason = ("Google's servers were overloaded" if "503" in err or "UNAVAILABLE" in err else

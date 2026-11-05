@@ -4,6 +4,7 @@
     python -m finintel build
     python -m finintel ask "How did Apple's operating margin change from FY2022 to FY2024, and why?"
     python -m finintel status
+    python -m finintel check-llm
     python -m finintel eval --questions finintel/eval/questions.example.json
     streamlit run finintel/app/streamlit_app.py
 """
@@ -31,6 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     pa.add_argument("question")
     pa.add_argument("--no-llm", action="store_true")
     sub.add_parser("status", help="show what data is loaded")
+    sub.add_parser("check-llm", help="test which Gemini models your GEMINI_API_KEY can use")
     pe = sub.add_parser("eval", help="compare baselines on a question set")
     pe.add_argument("--questions", required=True)
     pe.add_argument("--out", default="eval_results.json")
@@ -50,6 +52,21 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "status":
         from finintel.system import data_status
         print(json.dumps(data_status(s), indent=2))
+    elif args.cmd == "check-llm":
+        if not s.gemini_api_key:
+            print("GEMINI_API_KEY is not set in this window. Run: set GEMINI_API_KEY=your-key")
+            return 1
+        from finintel.agent.llm import check_models
+        results = check_models(s.gemini_api_key)
+        for r in results:
+            print(f"{'OK  ' if r['ok'] else 'FAIL'} {r['model']:<32} {r['seconds']:>5}s  {r.get('reply') or r.get('error')}")
+        good = [r for r in results if r["ok"]]
+        if good:
+            best = min(good, key=lambda r: r["seconds"])["model"]
+            print(f"\nUse this model:  set FININTEL_LLM_MODEL={best}")
+        else:
+            print("\nNo model answered. If every error is 503, Google is overloaded - try later. "
+                  "If you see 400/403, the key is wrong or not enabled for the Gemini API.")
     elif args.cmd == "eval":
         from finintel.eval.run_eval import run
         res = run(args.questions, s)
