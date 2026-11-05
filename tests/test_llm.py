@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from google.genai import errors
 
-from finintel.agent.llm import GeminiLLM, suggested_model
+from finintel.agent.llm import FALLBACK_MODELS, GeminiLLM, suggested_model
 
 RETIRED = ("This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use "
            "models/gemini-3.8-flash for the latest features and improvements.")
@@ -52,7 +52,7 @@ def overloaded():
 class FlakyModels:
     """Fails with 503 for the first `fails` calls to `bad` model; other models always work."""
 
-    def __init__(self, fails, bad="gemini-3.8-flash"):
+    def __init__(self, fails, bad=FALLBACK_MODELS[0]):
         self.fails, self.bad, self.seen = fails, bad, []
 
     def generate_content(self, model, contents, config):
@@ -66,7 +66,7 @@ class FlakyModels:
 def test_retries_when_google_is_overloaded():
     slept = []
     llm = GeminiLLM("k", client=SimpleNamespace(models=FlakyModels(fails=2)), sleep=slept.append, retries=3)
-    assert llm.generate("q") == "answer from gemini-3.8-flash"
+    assert llm.generate("q") == f"answer from {FALLBACK_MODELS[0]}"
     assert slept == [2.0, 4.0]
 
 
@@ -74,8 +74,8 @@ def test_switches_model_when_one_stays_overloaded():
     slept = []
     models = FlakyModels(fails=99)
     llm = GeminiLLM("k", client=SimpleNamespace(models=models), sleep=slept.append, retries=3)
-    assert llm.generate("q") == "answer from gemini-flash-latest"
-    assert len(slept) == 3 and llm.model == "gemini-flash-latest"
+    assert llm.generate("q") == f"answer from {FALLBACK_MODELS[1]}"
+    assert len(slept) == 3 and llm.model == FALLBACK_MODELS[1]
 
 
 def test_daily_quota_is_not_retried():
@@ -102,8 +102,8 @@ class HangingModels:
 
 
 def test_timeout_is_retried_then_switches_model():
-    llm = GeminiLLM("k", client=SimpleNamespace(models=HangingModels({"gemini-3.8-flash"})), sleep=lambda s: None)
-    assert llm.generate("q") == "answer from gemini-flash-latest"
+    llm = GeminiLLM("k", client=SimpleNamespace(models=HangingModels({FALLBACK_MODELS[0]})), sleep=lambda s: None)
+    assert llm.generate("q") == f"answer from {FALLBACK_MODELS[1]}"
 
 
 def test_overall_time_budget_stops_retrying():
@@ -112,8 +112,7 @@ def test_overall_time_budget_stops_retrying():
     def sleep(s):
         t[0] += s
 
-    llm = GeminiLLM("k", client=SimpleNamespace(models=HangingModels({"gemini-3.8-flash", "gemini-flash-latest",
-                                                                       "gemini-2.5-flash"})),
+    llm = GeminiLLM("k", client=SimpleNamespace(models=HangingModels(set(FALLBACK_MODELS))),
                     sleep=sleep, clock=lambda: t[0], budget_s=10, retries=3)
     assert llm.generate("q") is None and "time limit" in llm.last_error
     assert t[0] <= 10 + 8
@@ -122,7 +121,7 @@ def test_overall_time_budget_stops_retrying():
 
 def test_after_a_failure_gemini_is_skipped_for_a_while():
     t = [0.0]
-    models = HangingModels({"gemini-3.8-flash", "gemini-flash-latest", "gemini-2.5-flash"})
+    models = HangingModels(set(FALLBACK_MODELS))
     llm = GeminiLLM("k", client=SimpleNamespace(models=models), sleep=lambda s: t.__setitem__(0, t[0] + s),
                     clock=lambda: t[0], cooldown_s=300)
     assert llm.generate("q") is None

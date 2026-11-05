@@ -22,7 +22,7 @@ class LLM(Protocol):
 
 # Tried in order when a model is retired (HTTP 404). Google's error message usually names the replacement,
 # which is tried first; FININTEL_LLM_MODEL overrides the default.
-FALLBACK_MODELS = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-2.5-flash"]
+FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-3-flash-preview", "gemini-3.8-flash", "gemini-flash-latest"]
 
 
 def suggested_model(message: str) -> str | None:
