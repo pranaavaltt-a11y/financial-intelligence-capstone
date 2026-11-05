@@ -121,3 +121,34 @@ def test_text_only_question_answers_from_filing(qa):
     cited = [c for c in ans.citations if c.ref.startswith("S")]
     assert cited and "Risk Factors" in cited[0].description
     assert "Competition" in cited[0].snippet and "$" not in ans.text.split("Context")[0]
+
+
+class NoWhyLLM:
+    """Answers the numbers correctly but gives up on the 'why' (what Gemini did on Amazon)."""
+    name = "nowhy"
+
+    def __init__(self):
+        self.prompts = []
+
+    def generate(self, prompt, as_json=False):
+        self.prompts.append(prompt)
+        return ("Example Corp's operating margin went from 26.7% [C1] to 24.0% [C2]. "
+                "The provided evidence does not explain why.")
+
+
+def test_why_question_prefers_an_answer_that_cites_the_explanation(settings):
+    build(settings, use_gemini=False)
+    base = load(settings, use_llm=False)
+    llm = NoWhyLLM()
+    ans = FinancialQA(base.wh, base.retriever, llm).ask(
+        "How did Example Corp's operating margin change from FY2022 to FY2023, and why?")
+    assert any(c.ref.startswith("S") for c in ans.citations)          # explanation quoted from the filing
+    assert "research and development" in ans.text
+    assert "primarily due to" in llm.prompts[0] and "PASSAGES:" in llm.prompts[0]   # LLM was told where to look
+    assert len(llm.prompts) == 2 and "did not explain WHY" in llm.prompts[1]        # asked again before falling back
+
+
+def test_why_search_covers_every_year_in_the_period(qa):
+    plan = qa.plan("How did Example Corp's operating margin change from FY2021 to FY2023, and why?")
+    ev = qa.gather("How did Example Corp's operating margin change from FY2021 to FY2023, and why?", plan)
+    assert ev.passages and all(p.fiscal_year == 2023 for p in ev.passages.values())   # middle/end-year text found

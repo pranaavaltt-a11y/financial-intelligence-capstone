@@ -26,6 +26,19 @@ from finintel.retrieval.hybrid import HybridRetriever
 
 log = logging.getLogger(__name__)
 
+# Wording 10-K MD&A sections use when discussing each metric (helps keyword search find the explanation).
+EXPLAIN_TERMS = {
+    "operating_margin": "operating income operating expenses segment",
+    "net_margin": "net income income taxes",
+    "gross_margin": "gross margin cost of sales products services",
+    "revenue": "net sales revenue segment",
+    "net_income": "net income operating income",
+    "operating_income": "operating income operating expenses segment",
+    "rd_expense": "research and development",
+    "rd_intensity": "research and development",
+    "operating_cash_flow": "cash provided by operating activities",
+}
+
 
 @dataclass
 class Evidence:
@@ -39,12 +52,14 @@ class Evidence:
 
 class FinancialQA:
     def __init__(self, warehouse: Warehouse, retriever: HybridRetriever | None, llm: LLM | None = None,
-                 top_k: int = 8, passages_in_answer: int = 2, max_retries: int = 1, llm_planner: bool = False):
+                 top_k: int = 8, passages_in_answer: int = 2, max_retries: int = 1, llm_planner: bool = False,
+                 passages_for_llm: int = 5):
         self.wh = warehouse
         self.retriever = retriever
         self.llm = llm
         self.top_k = top_k
-        self.passages_in_answer = passages_in_answer
+        self.passages_in_answer = passages_in_answer   # quoted by the template answer
+        self.passages_for_llm = passages_for_llm       # the LLM reads more and picks the relevant ones
         self.max_retries = max_retries
         self.llm_planner = llm_planner   # off by default: rules plan well and it saves one LLM call per question
 
@@ -117,13 +132,26 @@ class FinancialQA:
 
         passages: dict[str, Chunk] = {}
         if self.retriever and (plan.needs_explanation or not facts):
-            hits = self.retriever.search(question, k=self.top_k, tickers=set(plan.companies) or None,
-                                         years=None if widen else (set(plan.years) or None))
+            # Search every filing in the period: a FY2022 -> FY2024 change is explained across the FY2022, FY2023
+            # and FY2024 10-Ks, not just the end years.
+            years = set(range(min(plan.years), max(plan.years) + 1)) if plan.years and not widen else None
+            hits = self.retriever.search(self._search_query(question, plan), k=self.top_k,
+                                         tickers=set(plan.companies) or None, years=years)
             if plan.needs_explanation:   # narrative explains "why"; tables only if nothing else was found
                 hits = [h for h in hits if h.chunk.kind == "text"] + [h for h in hits if h.chunk.kind != "text"]
-            for i, h in enumerate(hits[: self.passages_in_answer + (2 if widen else 0)]):
+            n = self.passages_for_llm if self.llm else self.passages_in_answer + (2 if widen else 0)
+            for i, h in enumerate(hits[:n]):
                 passages[f"S{i + 1}"] = h.chunk
         return Evidence(facts, calcs, passages, requested, found, missing)
+
+    @staticmethod
+    def _search_query(question: str, plan: Plan) -> str:
+        """Add the words filings use when explaining a change, so keyword search finds the MD&A explanation."""
+        if not (plan.needs_explanation and plan.metrics):
+            return question
+        terms = {LABELS.get(m, m) for m in plan.metrics + plan.base_metrics()}
+        extra = EXPLAIN_TERMS.get(plan.metrics[0], "")
+        return f"{question} {' '.join(sorted(terms))} {extra} increased decreased primarily due to driven by compared"
 
     # ---------------- composing ----------------
     @staticmethod
@@ -179,7 +207,7 @@ class FinancialQA:
                 if len(vals) > 1:
                     v, t, r = max(vals)
                     sents.append(f"In FY{y}, {self._company(t, names)} had the highest {label} [{r}].")
-        for ref, ch in ev.passages.items():
+        for ref, ch in list(ev.passages.items())[: self.passages_in_answer]:
             words = ch.text.split()
             quote = (" ".join(words[:45]) + ("..." if len(words) > 45 else "")).replace('"', "'")
             sents.append(f"Context from {ch.ticker}'s FY{ch.fiscal_year} 10-K ({ch.section}): \"{quote}\" [{ref}].")
@@ -231,16 +259,23 @@ class FinancialQA:
                     draft2 = self._llm_answer(question, ev, fb)
                     if draft2:
                         draft = draft2
+                elif ev.passages and not self._explained(draft, plan):
+                    notes.append("Gemini's first draft skipped the explanation; asked it to use the filing passages.")
+                    fb = ("\nYour previous draft did not explain WHY. The PASSAGES below come from the company's 10-K "
+                          "MD&A; summarise the causes they state for the change, citing [S#] after each sentence.")
+                    draft2 = self._llm_answer(question, ev, fb)
+                    if draft2:
+                        draft = draft2
                 candidates.append((draft, True))
             candidates.append((self.template_answer(plan, ev), False))
             for text, used_llm in candidates:
                 rep = verify(text, ev.facts, ev.calcs, ev.passages, ev.requested, ev.found)
-                key = self._rank(rep, ev, plan)
-                if best is None or key > self._rank(best[2], best[1], plan):
+                key = self._rank(rep, text, used_llm, plan)
+                if best is None or key > self._rank(best[2], best[0], best[3], plan):
                     best = (text, ev, rep, used_llm)
-                if rep.passed:
-                    break
-            if best and best[2].passed and (not plan.needs_explanation or best[1].passages):
+                if rep.passed and self._explained(text, plan):
+                    break       # verified and complete; no need to look at the template
+            if best and best[2].passed and self._explained(best[0], plan):
                 break      # verified, and has an explanation if one was asked for
         text, ev, rep, used_llm = best  # type: ignore[misc]
         if self.llm and not used_llm and got_draft:
@@ -250,10 +285,14 @@ class FinancialQA:
                       list(dict.fromkeys(notes)))
 
     @staticmethod
-    def _rank(rep, ev: Evidence, plan: Plan) -> tuple:
-        """Prefer verified answers, then ones that include the explanation asked for, then confidence."""
-        explained = bool(ev.passages) or not plan.needs_explanation
-        return (rep.passed, explained, rep.confidence)
+    def _explained(text: str, plan: Plan) -> bool:
+        """A "why" question is only answered if the answer cites at least one filing passage."""
+        return not plan.needs_explanation or "[S" in text
+
+    @classmethod
+    def _rank(cls, rep, text: str, used_llm: bool, plan: Plan) -> tuple:
+        """Prefer verified answers, then ones that cite the explanation asked for, then LLM prose, then confidence."""
+        return (rep.passed, cls._explained(text, plan), used_llm, rep.confidence)
 
     @staticmethod
     def _citations(ev: Evidence, text: str) -> list[Citation]:

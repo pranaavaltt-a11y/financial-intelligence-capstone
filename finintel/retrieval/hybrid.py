@@ -10,6 +10,7 @@ exact year/number matches and the section a question is likely to be answered in
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -21,6 +22,7 @@ from finintel.retrieval.dense import Embedder
 from finintel.retrieval.text import tokenize
 
 WHY_WORDS = {"why", "reason", "reasons", "driver", "drivers", "explain", "cause", "caused", "due"}
+CAUSE_RE = re.compile(r"primarily due to|driven by|due to|as a result of|offset by|attributable to", re.I)
 RISK_WORDS = {"risk", "risks", "threat", "uncertainty", "exposure"}
 
 
@@ -54,6 +56,8 @@ class LexicalReranker:
             section = 0.3 if any(p in h.chunk.section for p in prefer) else 0.0
             if "MD&A" in prefer and h.chunk.kind == "text":
                 section += 0.2       # "why" questions are answered by narrative, not tables
+                if CAUSE_RE.search(h.chunk.text):
+                    section += 0.3   # passages that state a cause
             scored.append(Hit(h.chunk, coverage + 0.5 * num_match + section + 0.2 * h.score,
                               h.bm25_rank, h.dense_rank))
         scored.sort(key=lambda x: x.score, reverse=True)

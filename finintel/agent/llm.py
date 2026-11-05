@@ -186,8 +186,10 @@ ANSWER_PROMPT = """You are a financial analyst assistant. Answer the question us
 Rules:
 - Copy numbers exactly as written in FACTS or CALCULATIONS. Never compute or estimate new numbers.
 - Put a citation after every sentence: [F#] for facts, [C#] for calculations, [S#] for passages.
-- Use passages only for explanations (the "why"); a sentence citing [S#] must restate what that passage says.
-- If the evidence does not answer part of the question, say so plainly.
+- Use passages only for explanations (the "why"). Look for sentences stating causes - "primarily due to",
+  "driven by", "as a result of", "partially offset by" - and summarise them close to the passage's own wording,
+  citing [S#]. A sentence citing [S#] must restate what that passage says.
+- Only say the evidence does not explain something if no passage discusses it.
 - At most 120 words, plain prose, no headings.
 {feedback}
 QUESTION: {question}
